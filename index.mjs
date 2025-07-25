@@ -10,60 +10,57 @@ import { programs } from "./routes/programs.mjs";
 import { googleApi } from "./routes/googleApi.mjs";
 dot.config();
 
-async function createApp() {
-  const app = express();
-  app.use(morgan("dev"));
-  app.use(cors("*"));
-  app.use(
-    bodyParser.raw({
-      type: "image/jpg",
-      limit: "10mb",
-    })
-  );
-  app.use((req, res, next) => {
-    console.log(req.headers.authorization);
-    next();
+const app = express();
+app.use(morgan("dev"));
+app.use(cors("*"));
+app.use(
+  bodyParser.raw({
+    type: "image/jpg",
+    limit: "10mb",
+  })
+);
+app.use((req, res, next) => {
+  console.log(req.headers.authorization);
+  next();
+});
+
+// Root route
+app.get("/", (req, res) => {
+  res.json({
+    status: "CalcAI Server is running",
+    timestamp: new Date().toISOString(),
+    endpoints: ["/gpt/ask", "/programs/list", "/chats/messages", "/image/list"]
   });
+});
 
-  // Root route
-  app.get("/", (req, res) => {
-    res.json({
-      status: "CalcAI Server is running",
-      timestamp: new Date().toISOString(),
-      endpoints: ["/gpt/ask", "/programs/list", "/chats/messages", "/image/list"]
-    });
-  });
+// Favicon routes to prevent 404s
+app.get("/favicon.ico", (req, res) => {
+  res.status(204).end();
+});
 
-  // Favicon routes to prevent 404s
-  app.get("/favicon.ico", (req, res) => {
-    res.status(204).end();
-  });
+app.get("/favicon.png", (req, res) => {
+  res.status(204).end();
+});
 
-  app.get("/favicon.png", (req, res) => {
-    res.status(204).end();
-  });
+// Programs
+app.use("/programs", programs());
 
-  // Programs
-  app.use("/programs", programs());
+// OpenAI API
+chatgpt().then(gptRoutes => {
+  app.use("/gpt", gptRoutes);
+});
 
-  // OpenAI API
-  app.use("/gpt", await chatgpt());
+// Google API
+//app.use("/google", await googleApi());
 
-  // Google API
-  //app.use("/google", await googleApi());
+// Chat
+app.use("/chats", chat());
 
-  // Chat
-  app.use("/chats", await chat());
-
-  // Images
-  app.use("/image", images());
-
-  return app;
-}
+// Images
+app.use("/image", images());
 
 // For local development
 if (process.env.NODE_ENV !== 'production') {
-  const app = await createApp();
   const port = +(process.env.PORT ?? 8080);
   app.listen(port, () => {
     console.log(`listening on ${port}`);
@@ -71,4 +68,4 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Export for Vercel
-export default createApp;
+export default app;
