@@ -8,10 +8,19 @@ export function images() {
 
   const imageDir = path.join(process.cwd(), "images");
 
-  const images = fs.readdirSync(imageDir, {
-    withFileTypes: false,
-    encoding: "ascii",
-  });
+  // Handle case where images directory doesn't exist (for Vercel deployment)
+  let images = [];
+  try {
+    if (fs.existsSync(imageDir)) {
+      images = fs.readdirSync(imageDir, {
+        withFileTypes: false,
+        encoding: "ascii",
+      });
+    }
+  } catch (error) {
+    console.log("Images directory not found, using empty array");
+    images = [];
+  }
 
   const len = 16;
   const list_len = 4;

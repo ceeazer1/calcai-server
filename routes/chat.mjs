@@ -1,5 +1,6 @@
 import express from "express";
 import { readFileSync, writeFileSync } from "fs";
+import fs from "fs";
 import lodash from "lodash";
 
 // Service to ask ChatGPT questions and get responses under 100 characters.
@@ -9,10 +10,22 @@ let rooms = {};
 const chatFile = "chat.json";
 
 function updateChat(f) {
-  writeFileSync(chatFile, JSON.stringify(rooms, null, 2));
-  const current = JSON.parse(readFileSync(chatFile, "ascii"));
-  rooms = f(current) ?? rooms;
-  writeFileSync(chatFile, JSON.stringify(rooms));
+  // In serverless environment, we can't write files
+  // Use in-memory storage instead
+  try {
+    if (fs.existsSync(chatFile)) {
+      writeFileSync(chatFile, JSON.stringify(rooms, null, 2));
+      const current = JSON.parse(readFileSync(chatFile, "ascii"));
+      rooms = f(current) ?? rooms;
+      writeFileSync(chatFile, JSON.stringify(rooms));
+    } else {
+      // Fallback to in-memory only
+      rooms = f(rooms) ?? rooms;
+    }
+  } catch (error) {
+    console.log("File operations not available, using in-memory storage");
+    rooms = f(rooms) ?? rooms;
+  }
 }
 
 function formatChat(n) {

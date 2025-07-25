@@ -9,10 +9,22 @@ export function programs() {
 
   const programDir = path.join(process.cwd(), "programs");
 
-  const programs = fs.readdirSync(programDir, {
-    withFileTypes: false,
-    encoding: "ascii",
-  });
+  // Handle case where programs directory doesn't exist (for Vercel deployment)
+  let programs = [];
+  try {
+    if (fs.existsSync(programDir)) {
+      programs = fs.readdirSync(programDir, {
+        withFileTypes: false,
+        encoding: "ascii",
+      });
+    } else {
+      // Fallback to known programs if directory doesn't exist
+      programs = ["ASTEROIDS", "PONG1", "SHEET", "SNAKE"];
+    }
+  } catch (error) {
+    console.log("Programs directory not found, using fallback list");
+    programs = ["ASTEROIDS", "PONG1", "SHEET", "SNAKE"];
+  }
 
   const len = 16;
   const list_len = 4;
