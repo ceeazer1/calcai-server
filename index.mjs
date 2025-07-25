@@ -33,8 +33,12 @@ app.get("/", (req, res) => {
   });
 });
 
-// Favicon route to prevent 404s
+// Favicon routes to prevent 404s
 app.get("/favicon.ico", (req, res) => {
+  res.status(204).end();
+});
+
+app.get("/favicon.png", (req, res) => {
   res.status(204).end();
 });
 
