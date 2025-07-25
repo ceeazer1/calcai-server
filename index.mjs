@@ -10,52 +10,58 @@ import { programs } from "./routes/programs.mjs";
 import { googleApi } from "./routes/googleApi.mjs";
 dot.config();
 
-const app = express();
-app.use(morgan("dev"));
-app.use(cors("*"));
-app.use(
-  bodyParser.raw({
-    type: "image/jpg",
-    limit: "10mb",
-  })
-);
-app.use((req, res, next) => {
-  console.log(req.headers.authorization);
-  next();
-});
-
-// Root route
-app.get("/", (req, res) => {
-  res.json({
-    status: "CalcAI Server is running",
-    timestamp: new Date().toISOString(),
-    endpoints: ["/gpt/ask", "/programs/list", "/chats/messages", "/image/list"]
+async function createApp() {
+  const app = express();
+  app.use(morgan("dev"));
+  app.use(cors("*"));
+  app.use(
+    bodyParser.raw({
+      type: "image/jpg",
+      limit: "10mb",
+    })
+  );
+  app.use((req, res, next) => {
+    console.log(req.headers.authorization);
+    next();
   });
-});
 
-// Favicon routes to prevent 404s
-app.get("/favicon.ico", (req, res) => {
-  res.status(204).end();
-});
+  // Root route
+  app.get("/", (req, res) => {
+    res.json({
+      status: "CalcAI Server is running",
+      timestamp: new Date().toISOString(),
+      endpoints: ["/gpt/ask", "/programs/list", "/chats/messages", "/image/list"]
+    });
+  });
 
-app.get("/favicon.png", (req, res) => {
-  res.status(204).end();
-});
+  // Favicon routes to prevent 404s
+  app.get("/favicon.ico", (req, res) => {
+    res.status(204).end();
+  });
 
-// Programs
-app.use("/programs", programs());
+  app.get("/favicon.png", (req, res) => {
+    res.status(204).end();
+  });
 
-// OpenAI API
-app.use("/gpt", await chatgpt());
+  // Programs
+  app.use("/programs", programs());
 
-// Google API
-//app.use("/google", await googleApi());
+  // OpenAI API
+  app.use("/gpt", await chatgpt());
 
-// Chat
-app.use("/chats", await chat());
+  // Google API
+  //app.use("/google", await googleApi());
 
-// Images
-app.use("/image", images());
+  // Chat
+  app.use("/chats", await chat());
+
+  // Images
+  app.use("/image", images());
+
+  return app;
+}
+
+const app = await createApp();
 
 // For local development
 if (process.env.NODE_ENV !== 'production') {
