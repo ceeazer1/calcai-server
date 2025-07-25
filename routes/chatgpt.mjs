@@ -5,13 +5,28 @@ import * as Jimp from "jimp"; // ✅ Corrected import
 
 export async function chatgpt() {
   const routes = express.Router();
-  const gpt = new openai.OpenAI();
+
+  // Explicitly check for API key
+  if (!process.env.OPENAI_API_KEY) {
+    console.error("OPENAI_API_KEY environment variable is not set");
+  }
+
+  const gpt = new openai.OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
 
   // simply answer a question
   routes.get("/ask", async (req, res) => {
     const question = req.query.question ?? "";
     if (Array.isArray(question)) {
       res.sendStatus(400);
+      return;
+    }
+
+    // Check if API key is available
+    if (!process.env.OPENAI_API_KEY) {
+      console.error("OpenAI API key not configured");
+      res.status(500).send("OpenAI API key not configured");
       return;
     }
 
