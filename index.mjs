@@ -24,6 +24,20 @@ app.use((req, res, next) => {
   next();
 });
 
+// Root route
+app.get("/", (req, res) => {
+  res.json({
+    status: "CalcAI Server is running",
+    timestamp: new Date().toISOString(),
+    endpoints: ["/gpt/ask", "/programs/list", "/chats/messages", "/image/list"]
+  });
+});
+
+// Favicon route to prevent 404s
+app.get("/favicon.ico", (req, res) => {
+  res.status(204).end();
+});
+
 // Programs
 app.use("/programs", programs());
 
