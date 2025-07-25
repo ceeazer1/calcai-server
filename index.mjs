@@ -61,10 +61,9 @@ async function createApp() {
   return app;
 }
 
-const app = await createApp();
-
 // For local development
 if (process.env.NODE_ENV !== 'production') {
+  const app = await createApp();
   const port = +(process.env.PORT ?? 8080);
   app.listen(port, () => {
     console.log(`listening on ${port}`);
@@ -72,4 +71,4 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Export for Vercel
-export default app;
+export default createApp;
