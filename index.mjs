@@ -16,7 +16,7 @@ app.get("/", (req, res) => {
 });
 
 // Mount ChatGPT routes (includes /gpt/ask, /gpt/ask-image, /gpt/solve)
-app.use("/gpt", await chatgpt());
+app.use("/gpt", chatgpt());
 
 // Export for Vercel
 export default app;

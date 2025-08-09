@@ -3,7 +3,7 @@ import openai from "openai";
 import i264 from "image-to-base64";
 import Jimp from "jimp";
 
-export async function chatgpt() {
+export function chatgpt() {
   const routes = express.Router();
 
   const gpt = new openai.OpenAI();
