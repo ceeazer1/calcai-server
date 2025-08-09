@@ -36,3 +36,6 @@ temp/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Vercel local files
+.vercel
