@@ -1,6 +1,10 @@
 import express from "express";
 import openai from "openai";
 
+// Simple in-memory slot for the last uploaded image (ephemeral)
+let lastImageBuf = null;
+let lastImageMime = "image/jpeg";
+
 export function chatgpt() {
   const routes = express.Router();
 
@@ -49,6 +53,10 @@ export function chatgpt() {
           return;
         }
 
+        // Save last image (ephemeral) for viewing at /gpt/last-image
+        lastImageBuf = Buffer.from(req.body);
+        lastImageMime = (req.headers["content-type"] || "image/jpeg").toString();
+
         const encoded_image = req.body.toString("base64");
 
         const result = await gpt.chat.completions.create({
@@ -80,6 +88,16 @@ export function chatgpt() {
       }
     }
   );
+
+  // View the last uploaded image (ephemeral, single slot)
+  routes.get("/last-image", (req, res) => {
+    if (!lastImageBuf) {
+      res.status(404).type("text/plain").send("no image");
+      return;
+    }
+    res.setHeader("Content-Type", lastImageMime);
+    res.send(lastImageBuf);
+  });
 
   return routes;
 }
