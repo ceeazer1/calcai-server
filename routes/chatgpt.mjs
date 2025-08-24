@@ -57,6 +57,7 @@ export function chatgpt() {
         lastImageBuf = Buffer.from(req.body);
         lastImageMime = (req.headers["content-type"] || "image/jpeg").toString();
 
+
         const encoded_image = req.body.toString("base64");
 
         const result = await gpt.chat.completions.create({
@@ -95,6 +96,16 @@ export function chatgpt() {
       res.status(404).type("text/plain").send("no image");
       return;
     }
+
+    if (req.query.info === "1") {
+      res.type("application/json").send({
+        mime: lastImageMime,
+        updatedAt: lastImageUpdatedAt ? lastImageUpdatedAt.toISOString() : null,
+        size: lastImageBuf.length
+      });
+      return;
+    }
+
     res.setHeader("Content-Type", lastImageMime);
     res.send(lastImageBuf);
   });

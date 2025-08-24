@@ -11,12 +11,20 @@ app.get("/", (req, res) => {
   res.json({
     status: "CalcAI Server is running",
     timestamp: new Date().toISOString(),
-    endpoints: ["/gpt/ask", "/gpt/ask-image", "/gpt/solve"],
+    endpoints: ["/gpt/ask", "/gpt/ask-image"],
   });
 });
 
-// Mount ChatGPT routes (includes /gpt/ask, /gpt/ask-image, /gpt/solve)
+// Mount ChatGPT routes (includes /gpt/ask and /gpt/ask-image)
 app.use("/gpt", chatgpt());
 
-// Export for Vercel
+// Start server when not on Vercel (e.g., Fly.io, local)
+const port = process.env.PORT || 3000;
+if (!process.env.VERCEL) {
+  app.listen(port, () => {
+    console.log(`CalcAI Server listening on port ${port}`);
+  });
+}
+
+// Export default for Vercel compatibility
 export default app;
