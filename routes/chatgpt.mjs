@@ -4,6 +4,7 @@ import openai from "openai";
 // Simple in-memory slot for the last uploaded image (ephemeral)
 let lastImageBuf = null;
 let lastImageMime = "image/jpeg";
+let lastImageUpdatedAt = null;
 
 export function chatgpt() {
   const routes = express.Router();
@@ -45,7 +46,7 @@ export function chatgpt() {
       try {
         const prompt = String(
           (typeof req.query.prompt === "string" && req.query.prompt) ||
-            "Describe and solve any math shown as succinctly as possible."
+            "You are CalcAI. Read the image and help with ANY subject (math, science, ELA, history, etc.). If the image shows a multiple-choice question, return ONLY the letter (A/B/C/...) and one short justification. If it’s a short-answer or free response, answer concisely. If no question, summarize key info. Do not assume it is math unless clearly a math problem."
         );
 
         if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
@@ -66,7 +67,7 @@ export function chatgpt() {
             {
               role: "system",
               content:
-                "Do not use emojis. Be concise and accurate. If multiple-choice, return just the letter.",
+                "You are CalcAI. Be concise and accurate. Do not use emojis. Detect the subject from the image (not only math). If multiple-choice, return just the letter plus a brief reason.",
             },
             {
               role: "user",
