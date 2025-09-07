@@ -1,24 +1,22 @@
 import express from "express";
+import { getDevices, saveDevices, upsertDevice, setUpdateFlags } from "./devices_store.mjs";
 
-// Minimal device-ingest API for ESP32 devices.
+// Device-ingest API for ESP32 devices (public from device) and simple admin helpers
 // - POST /api/devices/register-public
 //   Body: { mac, chipId, model, firmware, uptime, rssi, firstSeen }
-// - Optional auth: header X-Service-Token must equal process.env.DEVICES_SERVICE_TOKEN (if set)
+//   Idempotent: upserts into persistent store on Fly (devices.json)
+// - GET  /api/devices/list-public           (token optional, returns devices)
+// - PUT  /api/devices/update/:deviceId      (token required, set update flags)
 // - Optional forward: if process.env.DASHBOARD_FORWARD_URL is set, forward the payload
 //   with header X-Service-Token: process.env.DASHBOARD_SERVICE_TOKEN
-//
-// Keep this tiny and device-friendly. Return a small JSON with ok plus any hints
-// (e.g., featureFlags, otaUrl) in the future.
 
 export function devicesIngest() {
   const routes = express.Router();
+  routes.use(express.json({ limit: "200kb" }));
 
-  // Limit just this route if desired (global body parser is already applied)
-  routes.use(express.json({ limit: "100kb" }));
-
+  // Public device register/upsert (token optional but recommended)
   routes.post("/register-public", async (req, res) => {
     try {
-      // Optional incoming token check
       const requiredToken = process.env.DEVICES_SERVICE_TOKEN;
       if (requiredToken) {
         const headerToken = req.header("X-Service-Token") || req.header("x-service-token");
@@ -27,35 +25,17 @@ export function devicesIngest() {
         }
       }
 
-      const {
-        mac = "",
-        chipId = "",
-        model = "",
-        firmware = "",
-        uptime = 0,
-        rssi = null,
-        firstSeen = Date.now()
-      } = req.body || {};
-
+      const { mac = "", chipId = "", model = "", firmware = "", firstSeen = Date.now() } = req.body || {};
       if (!mac || !chipId) {
         return res.status(400).json({ ok: false, error: "mac and chipId required" });
       }
 
-      const payload = {
-        mac,
-        chipId,
-        model,
-        firmware,
-        uptime,
-        rssi,
-        firstSeen,
-        serverTs: Date.now(),
-      };
+      // Upsert into Fly server persistent store
+      const { deviceId, device } = upsertDevice({ mac, chipId, model, firmware, firstSeen });
 
       // Optional forward to dashboard/backoffice
-      const forwardUrl = process.env.DASHBOARD_FORWARD_URL; // e.g., https://calcai-management-dashboard.vercel.app/api/devices/register-ingest
-      const forwardToken = process.env.DASHBOARD_SERVICE_TOKEN; // server-to-server token expected by dashboard
-
+      const forwardUrl = process.env.DASHBOARD_FORWARD_URL;
+      const forwardToken = process.env.DASHBOARD_SERVICE_TOKEN;
       let forwarded = false;
       let forwardCode = null;
       if (forwardUrl) {
@@ -66,7 +46,7 @@ export function devicesIngest() {
               "Content-Type": "application/json",
               ...(forwardToken ? { "X-Service-Token": forwardToken } : {}),
             },
-            body: JSON.stringify(payload),
+            body: JSON.stringify({ mac, chipId, model, firmware, firstSeen }),
           });
           forwardCode = resp.status;
           forwarded = resp.ok;
@@ -75,14 +55,46 @@ export function devicesIngest() {
         }
       }
 
-      // Respond to device with a tiny JSON; keep it parsable
-      return res.json({ ok: true, forwarded, forwardCode });
+      return res.json({ ok: true, deviceId, forwarded, forwardCode });
     } catch (e) {
       console.error("[devices] ingest error:", e?.message || e);
       return res.status(500).json({ ok: false });
     }
   });
 
+  // Public list (token optional)
+  routes.get("/list-public", (req, res) => {
+    const requiredToken = process.env.DEVICES_SERVICE_TOKEN;
+    if (requiredToken) {
+      const headerToken = req.header("X-Service-Token") || req.header("x-service-token");
+      if (!headerToken || headerToken !== requiredToken) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+    }
+    const devices = getDevices();
+    // Mark offline if older than 5 minutes
+    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+    Object.values(devices).forEach(d => {
+      if (new Date(d.lastSeen).getTime() < fiveMinutesAgo) d.status = 'offline';
+    });
+    saveDevices(devices);
+    res.json(devices);
+  });
+
+  // Admin: set update flags on device (token required)
+  routes.put("/update/:deviceId", (req, res) => {
+    const requiredToken = process.env.DEVICES_SERVICE_TOKEN;
+    const headerToken = req.header("X-Service-Token") || req.header("x-service-token");
+    if (requiredToken && headerToken !== requiredToken) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+    const { deviceId } = req.params;
+    const { updateAvailable, targetFirmware } = req.body || {};
+    const ok = setUpdateFlags(deviceId, { updateAvailable, targetFirmware });
+    if (!ok) return res.status(404).json({ ok: false, error: "not_found" });
+    const devices = getDevices();
+    res.json({ ok: true, device: devices[deviceId] });
+  });
+
   return routes;
 }
-

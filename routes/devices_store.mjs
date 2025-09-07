@@ -1,0 +1,69 @@
+import fs from "fs";
+import path from "path";
+
+const devicesFile = path.join(process.cwd(), "devices.json");
+
+function readFileJSON(file) {
+  try {
+    if (!fs.existsSync(file)) return {};
+    const data = fs.readFileSync(file, "utf8");
+    return JSON.parse(data || "{}") || {};
+  } catch (e) {
+    console.error("[devices_store] read error:", e?.message || e);
+    return {};
+  }
+}
+
+function writeFileJSON(file, obj) {
+  try {
+    fs.writeFileSync(file, JSON.stringify(obj, null, 2), "utf8");
+    return true;
+  } catch (e) {
+    console.error("[devices_store] write error:", e?.message || e);
+    return false;
+  }
+}
+
+export function getDevices() {
+  return readFileJSON(devicesFile);
+}
+
+export function saveDevices(devices) {
+  return writeFileJSON(devicesFile, devices);
+}
+
+export function upsertDevice({ mac, chipId = '', model = 'ESP32', firmware = '1.0.0', firstSeen = null }) {
+  const devices = getDevices();
+  const deviceId = (mac || '').replace(/:/g, '').toLowerCase();
+  if (!deviceId) throw new Error("mac required");
+
+  const nowIso = new Date().toISOString();
+  const existing = devices[deviceId] || {};
+  const device = {
+    mac,
+    chipId: chipId || existing.chipId || '',
+    model: model || existing.model || 'ESP32',
+    firmware: firmware || existing.firmware || '1.0.0',
+    firstSeen: existing.firstSeen || firstSeen || nowIso,
+    lastSeen: nowIso,
+    status: 'online',
+    name: existing.name || `CalcAI-${(mac || '').slice(-5)}`,
+    updateAvailable: existing.updateAvailable || false,
+    targetFirmware: existing.targetFirmware || null,
+  };
+  devices[deviceId] = device;
+  saveDevices(devices);
+  return { deviceId, device };
+}
+
+export function setUpdateFlags(deviceId, { updateAvailable, targetFirmware }) {
+  const devices = getDevices();
+  const d = devices[deviceId];
+  if (!d) return false;
+  if (typeof updateAvailable !== 'undefined') d.updateAvailable = !!updateAvailable;
+  if (typeof targetFirmware !== 'undefined') d.targetFirmware = targetFirmware || null;
+  d.lastSeen = new Date().toISOString();
+  saveDevices(devices);
+  return true;
+}
+

@@ -16,31 +16,40 @@ export function otaProxy() {
     return true;
   }
 
-  // Base URL of the dashboard that stores firmware files and update metadata
+  // Base URL of the dashboard (only used to host firmware binaries)
   const DASHBOARD_BASE = process.env.MANAGEMENT_DASHBOARD_BASE || "https://calcai-management-dashboard.vercel.app";
+
+  // Use local device store on Fly for update metadata, so devices persist and don't disappear
+  const { getDevices } = await import("./devices_store.mjs");
 
   // GET /api/ota/check-update/:deviceId?currentVersion=...
   router.get("/check-update/:deviceId", async (req, res) => {
     if (!checkToken(req, res)) return;
     try {
       const { deviceId } = req.params;
-      const currentVersion = encodeURIComponent(req.query.currentVersion || "");
-      const url = `${DASHBOARD_BASE}/api/devices/check-update/${deviceId}?currentVersion=${currentVersion}`;
+      const currentVersion = req.query.currentVersion || "";
 
-      const resp = await fetch(url, { method: "GET" });
-      const status = resp.status;
-      const json = await resp.json().catch(() => ({}));
-
-      if (!resp.ok) {
-        return res.status(status).json(json);
+      const devices = getDevices();
+      const dev = devices[deviceId];
+      if (!dev) {
+        return res.status(404).json({ error: "Device not found" });
       }
 
-      // Normalize downloadUrl to point back through this server for the binary
-      if (json && json.updateAvailable && json.version) {
-        json.downloadUrl = `/api/ota/firmware/${encodeURIComponent(json.version)}`;
+      // Update lastSeen and firmware if provided
+      if (currentVersion) {
+        dev.firmware = currentVersion;
       }
+      dev.lastSeen = new Date().toISOString();
+      // No write here to keep this route read-mostly; it's fine to skip persistence
 
-      res.json(json);
+      if (dev.updateAvailable && dev.targetFirmware) {
+        return res.json({
+          updateAvailable: true,
+          version: dev.targetFirmware,
+          downloadUrl: `/api/ota/firmware/${encodeURIComponent(dev.targetFirmware)}`,
+        });
+      }
+      return res.json({ updateAvailable: false });
     } catch (e) {
       console.error("[otaProxy] check-update error:", e?.message || e);
       res.status(500).json({ ok: false, error: "proxy_failed" });
