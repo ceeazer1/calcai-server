@@ -3,6 +3,7 @@ import cors from "cors";
 import { chatgpt } from "./routes/chatgpt.mjs";
 import { devicesIngest } from "./routes/devices_ingest.mjs";
 import { devicesLogs } from "./routes/devices_logs.mjs";
+import { otaProxy } from "./routes/ota_proxy.mjs";
 
 const app = express();
 app.use(cors("*"));
@@ -13,7 +14,7 @@ app.get("/", (req, res) => {
   res.json({
     status: "CalcAI Server is running",
     timestamp: new Date().toISOString(),
-    endpoints: ["/gpt/ask", "/gpt/ask-image"],
+    endpoints: ["/gpt/ask", "/gpt/ask-image", "/api/ota/check-update/:deviceId", "/api/ota/firmware/:version"],
   });
 });
 
@@ -23,6 +24,9 @@ app.use("/gpt", chatgpt());
 // Device ingest routes
 app.use("/api/devices", devicesIngest());
 app.use("/api/devices", devicesLogs());
+
+// OTA proxy routes (ESP -> Fly -> Dashboard)
+app.use("/api/ota", otaProxy());
 
 // Start server when not on Vercel (e.g., Fly.io, local)
 const port = process.env.PORT || 3000;
