@@ -15,15 +15,25 @@ export function devicesIngest() {
   const routes = express.Router();
   routes.use(express.json({ limit: "200kb" }));
 
+  // Accept any of these tokens for admin/device actions (helps when dashboard and server use different env names)
+  const validTokens = [
+    process.env.DEVICES_SERVICE_TOKEN,
+    process.env.DASHBOARD_SERVICE_TOKEN,
+    process.env.SERVICE_TOKEN,
+  ].filter(t => t && t.length > 0);
+  const headerTokenOf = (req) => req.header("X-Service-Token") || req.header("x-service-token") || "";
+  const requireAuth = (req) => {
+    if (validTokens.length === 0) return true; // if nothing configured, allow
+    const tok = headerTokenOf(req);
+    return validTokens.includes(tok);
+  };
+
+
   // Public device register/upsert (token optional but recommended)
   routes.post("/register-public", async (req, res) => {
     try {
-      const requiredToken = process.env.DEVICES_SERVICE_TOKEN;
-      if (requiredToken) {
-        const headerToken = req.header("X-Service-Token") || req.header("x-service-token");
-        if (!headerToken || headerToken !== requiredToken) {
-          return res.status(401).json({ ok: false, error: "unauthorized" });
-        }
+      if (!requireAuth(req)) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
       }
 
       const { mac = "", chipId = "", model = "", firmware = "", firstSeen = Date.now() } = req.body || {};
@@ -68,12 +78,8 @@ export function devicesIngest() {
 
   // Public ping (token optional): update lastSeen/firmware by MAC without re-registering
   routes.post("/ping-public", (req, res) => {
-    const requiredToken = process.env.DEVICES_SERVICE_TOKEN;
-    if (requiredToken) {
-      const headerToken = req.header("X-Service-Token") || req.header("x-service-token");
-      if (!headerToken || headerToken !== requiredToken) {
-        return res.status(401).json({ ok: false, error: "unauthorized" });
-      }
+    if (!requireAuth(req)) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
     }
     const { mac = "", firmware = null, rssi = null } = req.body || {};
     if (!mac) return res.status(400).json({ ok: false, error: "mac_required" });
@@ -84,12 +90,8 @@ export function devicesIngest() {
 
   // Public list (token optional)
   routes.get("/list-public", (req, res) => {
-    const requiredToken = process.env.DEVICES_SERVICE_TOKEN;
-    if (requiredToken) {
-      const headerToken = req.header("X-Service-Token") || req.header("x-service-token");
-      if (!headerToken || headerToken !== requiredToken) {
-        return res.status(401).json({ ok: false, error: "unauthorized" });
-      }
+    if (!requireAuth(req)) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
     }
     const devices = getDevices();
     // Mark offline if older than 5 minutes
@@ -103,9 +105,7 @@ export function devicesIngest() {
 
   // Admin: set update flags on device (token required)
   routes.put("/update/:deviceId", (req, res) => {
-    const requiredToken = process.env.DEVICES_SERVICE_TOKEN;
-    const headerToken = req.header("X-Service-Token") || req.header("x-service-token");
-    if (requiredToken && headerToken !== requiredToken) {
+    if (!requireAuth(req)) {
       return res.status(401).json({ ok: false, error: "unauthorized" });
     }
     const { deviceId } = req.params;
@@ -118,9 +118,7 @@ export function devicesIngest() {
 
   // Admin: set update flags for ALL devices (token required)
   routes.post("/update-all", (req, res) => {
-    const requiredToken = process.env.DEVICES_SERVICE_TOKEN;
-    const headerToken = req.header("X-Service-Token") || req.header("x-service-token");
-    if (requiredToken && headerToken !== requiredToken) {
+    if (!requireAuth(req)) {
       return res.status(401).json({ ok: false, error: "unauthorized" });
     }
     const { version } = req.body || {};
