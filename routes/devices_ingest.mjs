@@ -34,8 +34,11 @@ export function devicesIngest() {
       const { deviceId, device } = upsertDevice({ mac, chipId, model, firmware, firstSeen });
 
       // Optional forward to dashboard/backoffice
-      const forwardUrl = process.env.DASHBOARD_FORWARD_URL;
-      const forwardToken = process.env.DASHBOARD_SERVICE_TOKEN;
+      // Derive URL from MANAGEMENT_DASHBOARD_BASE if DASHBOARD_FORWARD_URL not provided
+      const derivedBase = (process.env.MANAGEMENT_DASHBOARD_BASE || "").replace(/\/+$/,'');
+      const forwardUrl = process.env.DASHBOARD_FORWARD_URL || (derivedBase ? `${derivedBase}/api/devices/register-ingest` : null);
+      // Prefer DASHBOARD_SERVICE_TOKEN, else fall back to DEVICES_SERVICE_TOKEN so a single token can be used
+      const forwardToken = process.env.DASHBOARD_SERVICE_TOKEN || process.env.DEVICES_SERVICE_TOKEN;
       let forwarded = false;
       let forwardCode = null;
       if (forwardUrl) {
