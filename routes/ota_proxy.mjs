@@ -1,4 +1,5 @@
 import express from "express";
+import { getDevices } from "./devices_store.mjs";
 
 // OTA proxy routes: ESP talks to Fly.io server; we forward to the Vercel dashboard
 export function otaProxy() {
@@ -20,7 +21,6 @@ export function otaProxy() {
   const DASHBOARD_BASE = process.env.MANAGEMENT_DASHBOARD_BASE || "https://calcai-management-dashboard.vercel.app";
 
   // Use local device store on Fly for update metadata, so devices persist and don't disappear
-  const { getDevices } = await import("./devices_store.mjs");
 
   // GET /api/ota/check-update/:deviceId?currentVersion=...
   router.get("/check-update/:deviceId", async (req, res) => {
