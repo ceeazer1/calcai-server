@@ -99,5 +99,23 @@ export function devicesIngest() {
     res.json({ ok: true, device: devices[deviceId] });
   });
 
+  // Admin: set update flags for ALL devices (token required)
+  routes.post("/update-all", (req, res) => {
+    const requiredToken = process.env.DEVICES_SERVICE_TOKEN;
+    const headerToken = req.header("X-Service-Token") || req.header("x-service-token");
+    if (requiredToken && headerToken !== requiredToken) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+    const { version } = req.body || {};
+    if (!version) return res.status(400).json({ ok: false, error: "version_required" });
+    const devices = getDevices();
+    let count = 0;
+    Object.keys(devices || {}).forEach(id => {
+      const ok = setUpdateFlags(id, { updateAvailable: true, targetFirmware: version });
+      if (ok) count++;
+    });
+    return res.json({ ok: true, devicesUpdated: count });
+  });
+
   return routes;
 }
