@@ -21,7 +21,8 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+// Increase JSON limit to allow base64 firmware uploads from dashboard
+app.use(express.json({ limit: '20mb' }));
 
 // Root route
 app.get("/", (req, res) => {
