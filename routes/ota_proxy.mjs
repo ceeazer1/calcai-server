@@ -8,12 +8,16 @@ import path from "path";
 export function otaProxy() {
   const router = express.Router();
 
-  // Simple auth check using a shared service token (optional but recommended)
+  // Simple auth check using a shared service token (accept multiple env names)
   function checkToken(req, res) {
-    const requiredToken = process.env.DEVICES_SERVICE_TOKEN;
-    if (!requiredToken) return true;
-    const headerToken = req.header("X-Service-Token") || req.header("x-service-token");
-    if (!headerToken || headerToken !== requiredToken) {
+    const validTokens = [
+      process.env.DEVICES_SERVICE_TOKEN,
+      process.env.DASHBOARD_SERVICE_TOKEN,
+      process.env.SERVICE_TOKEN,
+    ].filter(t => t && t.length > 0);
+    if (validTokens.length === 0) return true; // if nothing configured, allow
+    const headerToken = req.header("X-Service-Token") || req.header("x-service-token") || "";
+    if (!validTokens.includes(headerToken)) {
       res.status(401).json({ ok: false, error: "unauthorized" });
       return false;
     }
@@ -109,13 +113,21 @@ export function otaProxy() {
       }
 
       const ct = resp.headers.get("content-type") || "application/octet-stream";
-      const cl = resp.headers.get("content-length");
       res.setHeader("Content-Type", ct);
-      if (cl) res.setHeader("Content-Length", cl);
       res.setHeader("Content-Disposition", `attachment; filename="${version}.bin"`);
 
-      const reader = resp.body;
-      reader.pipe(res);
+      // Cache the fetched firmware locally on Fly so subsequent requests never 404
+      try {
+        const arrayBuf = await resp.arrayBuffer();
+        const buf = Buffer.from(arrayBuf);
+        const localPath = path.join(firmwareDir, `${version}.bin`);
+        try { fs.writeFileSync(localPath, buf); } catch (e) { console.warn("[otaProxy] failed to cache firmware:", e?.message || e); }
+        return res.send(buf);
+      } catch (e) {
+        console.warn("[otaProxy] stream-to-buffer failed, piping through:", e?.message || e);
+        const reader = resp.body;
+        return reader.pipe(res);
+      }
     } catch (e) {
       console.error("[otaProxy] firmware error:", e?.message || e);
       res.status(500).send("proxy_failed");
