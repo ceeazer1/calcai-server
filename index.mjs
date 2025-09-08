@@ -11,7 +11,8 @@ app.use(cors("*"));
 app.use((req, res, next) => {
   try {
     const original = req.url;
-    const normalized = original.replace(/\/\/{2,}/g, "/");
+    // Collapse any sequence of 2+ slashes into a single slash (covers //api/...)
+    const normalized = original.replace(/\/{2,}/g, "/");
     if (normalized !== original) {
       console.log(`[normalize] ${original} -> ${normalized}`);
       req.url = normalized;
