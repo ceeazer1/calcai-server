@@ -1,7 +1,9 @@
 import fs from "fs";
 import path from "path";
 
-const devicesFile = path.join(process.cwd(), "devices.json");
+const storeDir = process.env.DEVICES_STORE_DIR || (fs.existsSync("/data") ? "/data" : process.cwd());
+try { if (!fs.existsSync(storeDir)) fs.mkdirSync(storeDir, { recursive: true }); } catch {}
+const devicesFile = path.join(storeDir, "devices.json");
 
 function readFileJSON(file) {
   try {

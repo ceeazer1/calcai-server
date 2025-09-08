@@ -10,6 +10,11 @@ kill_timeout = 5
 [env]
   PORT = "3000"
 
+
+[[mounts]]
+  source = "devices_data"
+  destination = "/data"
+
 [[services]]
   internal_port = 3000
   processes = ["app"]
