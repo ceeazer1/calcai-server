@@ -1,5 +1,8 @@
 import express from "express";
 import { getDevices } from "./devices_store.mjs";
+import fs from "fs";
+import path from "path";
+
 
 // OTA proxy routes: ESP talks to Fly.io server; we forward to the Vercel dashboard
 export function otaProxy() {
@@ -19,6 +22,15 @@ export function otaProxy() {
 
   // Base URL of the dashboard (only used to host firmware binaries)
   const DASHBOARD_BASE = process.env.MANAGEMENT_DASHBOARD_BASE || "https://calcai-management-dashboard.vercel.app";
+  // Local firmware directory on Fly (persistent if a volume is mounted)
+  const storeBase = process.env.DEVICES_STORE_DIR || (fs.existsSync("/data") ? "/data" : process.cwd());
+  const firmwareDir = path.join(storeBase, "firmware");
+  try { if (!fs.existsSync(firmwareDir)) fs.mkdirSync(firmwareDir, { recursive: true }); } catch {}
+
+  // Use local device store on Fly for update metadata, so devices persist and don't disappear
+
+  // Optional token to fetch firmware from dashboard (if it requires auth)
+  const DASHBOARD_SERVICE_TOKEN = process.env.DASHBOARD_SERVICE_TOKEN || process.env.DEVICES_SERVICE_TOKEN || null;
 
   // Use local device store on Fly for update metadata, so devices persist and don't disappear
 
@@ -56,27 +68,52 @@ export function otaProxy() {
     }
   });
 
-  // GET /api/ota/firmware/:version -> stream the .bin from dashboard
+  // POST /api/ota/firmware/upload  { version, dataBase64 }
+  router.post("/firmware/upload", async (req, res) => {
+    if (!checkToken(req, res)) return;
+    try {
+      const { version, dataBase64 } = req.body || {};
+      if (!version || !dataBase64) {
+        return res.status(400).json({ ok: false, error: "version_and_data_required" });
+      }
+      const safeVer = String(version).replace(/[^a-zA-Z0-9._-]/g, "_");
+      const filePath = path.join(firmwareDir, `${safeVer}.bin`);
+      const buf = Buffer.from(dataBase64, 'base64');
+      fs.writeFileSync(filePath, buf);
+      return res.json({ ok: true, version: safeVer, size: buf.length });
+    } catch (e) {
+      console.error("[otaProxy] firmware upload error:", e?.message || e);
+      res.status(500).json({ ok: false, error: "upload_failed" });
+    }
+  });
+
+  // GET /api/ota/firmware/:version -> serve local if present; else stream from dashboard
   router.get("/firmware/:version", async (req, res) => {
     if (!checkToken(req, res)) return;
     try {
       const { version } = req.params;
-      const url = `${DASHBOARD_BASE}/api/devices/firmware/${encodeURIComponent(version)}`;
+      const localPath = path.join(firmwareDir, `${version}.bin`);
+      if (fs.existsSync(localPath)) {
+        res.setHeader("Content-Type", "application/octet-stream");
+        res.setHeader("Content-Disposition", `attachment; filename="${version}.bin"`);
+        return res.sendFile(path.resolve(localPath));
+      }
 
-      const resp = await fetch(url);
+      const url = `${DASHBOARD_BASE}/api/devices/firmware/${encodeURIComponent(version)}`;
+      const resp = await fetch(url, {
+        headers: DASHBOARD_SERVICE_TOKEN ? { "X-Service-Token": DASHBOARD_SERVICE_TOKEN } : undefined,
+      });
       if (!resp.ok) {
         const text = await resp.text().catch(() => "");
         return res.status(resp.status).send(text || "failed to fetch firmware");
       }
 
-      // Mirror headers for content type/length if available
       const ct = resp.headers.get("content-type") || "application/octet-stream";
       const cl = resp.headers.get("content-length");
       res.setHeader("Content-Type", ct);
       if (cl) res.setHeader("Content-Length", cl);
       res.setHeader("Content-Disposition", `attachment; filename="${version}.bin"`);
 
-      // Stream body
       const reader = resp.body;
       reader.pipe(res);
     } catch (e) {
