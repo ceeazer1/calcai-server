@@ -52,6 +52,10 @@ export function upsertDevice({ mac, chipId = '', model = 'ESP32', firmware = '1.
     name: existing.name || `CalcAI-${(mac || '').slice(-5)}`,
     updateAvailable: existing.updateAvailable || false,
     targetFirmware: existing.targetFirmware || null,
+    // Update status fields
+    lastUpdatePingAt: existing.lastUpdatePingAt || null,
+    lastUpdateStatus: existing.lastUpdateStatus || null,
+    updatedAt: existing.updatedAt || null,
   };
   devices[deviceId] = device;
   saveDevices(devices);
@@ -65,7 +69,35 @@ export function setUpdateFlags(deviceId, { updateAvailable, targetFirmware }) {
   if (typeof updateAvailable !== 'undefined') d.updateAvailable = !!updateAvailable;
   if (typeof targetFirmware !== 'undefined') d.targetFirmware = targetFirmware || null;
   d.lastSeen = new Date().toISOString();
+  // If target cleared or already on target, clear updateAvailable
+  if (d.targetFirmware && d.firmware && d.firmware === d.targetFirmware) {
+    d.updateAvailable = false;
+    d.lastUpdateStatus = 'updated';
+    d.updatedAt = new Date().toISOString();
+  }
   saveDevices(devices);
   return true;
 }
 
+export function pingDevice({ mac, firmware = null, rssi = null }) {
+  const devices = getDevices();
+  const deviceId = (mac || '').replace(/:/g, '').toLowerCase();
+  const d = devices[deviceId];
+  if (!d) return { ok: false, notFound: true };
+  const nowIso = new Date().toISOString();
+  d.lastSeen = nowIso;
+  d.status = 'online';
+  if (firmware) d.firmware = firmware;
+  if (typeof rssi === 'number') d.rssi = rssi;
+  d.lastUpdatePingAt = nowIso;
+  // Derive update status for dashboard
+  if (d.targetFirmware && d.firmware === d.targetFirmware) {
+    d.updateAvailable = false;
+    d.lastUpdateStatus = 'updated';
+    d.updatedAt = nowIso;
+  } else {
+    d.lastUpdateStatus = d.updateAvailable ? 'not_updated' : 'updated';
+  }
+  saveDevices(devices);
+  return { ok: true, deviceId, device: d };
+}

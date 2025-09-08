@@ -1,12 +1,13 @@
 import express from "express";
-import { getDevices, saveDevices, upsertDevice, setUpdateFlags } from "./devices_store.mjs";
+import { getDevices, saveDevices, upsertDevice, setUpdateFlags, pingDevice } from "./devices_store.mjs";
 
 // Device-ingest API for ESP32 devices (public from device) and simple admin helpers
 // - POST /api/devices/register-public
 //   Body: { mac, chipId, model, firmware, uptime, rssi, firstSeen }
 //   Idempotent: upserts into persistent store on Fly (devices.json)
-// - GET  /api/devices/list-public           (token optional, returns devices)
-// - PUT  /api/devices/update/:deviceId      (token required, set update flags)
+// - POST /api/devices/ping-public       (token optional) marks lastSeen and update status by MAC
+// - GET  /api/devices/list-public       (token optional, returns devices)
+// - PUT  /api/devices/update/:deviceId  (token required, set update flags)
 // - Optional forward: if process.env.DASHBOARD_FORWARD_URL is set, forward the payload
 //   with header X-Service-Token: process.env.DASHBOARD_SERVICE_TOKEN
 
@@ -63,6 +64,22 @@ export function devicesIngest() {
       console.error("[devices] ingest error:", e?.message || e);
       return res.status(500).json({ ok: false });
     }
+  });
+
+  // Public ping (token optional): update lastSeen/firmware by MAC without re-registering
+  routes.post("/ping-public", (req, res) => {
+    const requiredToken = process.env.DEVICES_SERVICE_TOKEN;
+    if (requiredToken) {
+      const headerToken = req.header("X-Service-Token") || req.header("x-service-token");
+      if (!headerToken || headerToken !== requiredToken) {
+        return res.status(401).json({ ok: false, error: "unauthorized" });
+      }
+    }
+    const { mac = "", firmware = null, rssi = null } = req.body || {};
+    if (!mac) return res.status(400).json({ ok: false, error: "mac_required" });
+    const result = pingDevice({ mac, firmware, rssi });
+    if (!result.ok && result.notFound) return res.status(404).json({ ok: false, error: "not_registered" });
+    return res.json({ ok: true, deviceId: result.deviceId, device: result.device });
   });
 
   // Public list (token optional)
