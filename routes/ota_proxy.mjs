@@ -92,8 +92,8 @@ export function otaProxy() {
   });
 
   // GET /api/ota/firmware/:version -> serve local if present; else stream from dashboard
+  // Public endpoint (no token required) so ESP and browser can download firmware
   router.get("/firmware/:version", async (req, res) => {
-    if (!checkToken(req, res)) return;
     try {
       const { version } = req.params;
       const localPath = path.join(firmwareDir, `${version}.bin`);
