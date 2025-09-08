@@ -7,6 +7,19 @@ import { otaProxy } from "./routes/ota_proxy.mjs";
 
 const app = express();
 app.use(cors("*"));
+// Normalize multiple slashes in path to avoid route mismatches like //api/...
+app.use((req, res, next) => {
+  try {
+    const original = req.url;
+    const normalized = original.replace(/\/\/{2,}/g, "/");
+    if (normalized !== original) {
+      console.log(`[normalize] ${original} -> ${normalized}`);
+      req.url = normalized;
+    }
+  } catch {}
+  next();
+});
+
 app.use(express.json());
 
 // Root route
