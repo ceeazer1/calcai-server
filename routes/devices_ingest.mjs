@@ -1,5 +1,5 @@
 import express from "express";
-import { getDevices, saveDevices, upsertDevice, setUpdateFlags, pingDevice } from "./devices_store.mjs";
+import { getDevices, saveDevices, upsertDevice, setUpdateFlags, pingDevice, deleteDevice } from "./devices_store.mjs";
 
 // Device-ingest API for ESP32 devices (public from device) and simple admin helpers
 // - POST /api/devices/register-public
@@ -41,6 +41,12 @@ export function devicesIngest() {
         return res.status(400).json({ ok: false, error: "mac and chipId required" });
       }
 
+      // Determine if device already existed
+      try { /* safe read */ } catch {}
+      const snapshot = getDevices();
+      const preId = (mac || '').replace(/:/g, '').toLowerCase();
+      const alreadyRegistered = !!(snapshot && snapshot[preId]);
+
       // Upsert into Fly server persistent store
       const { deviceId, device } = upsertDevice({ mac, chipId, model, firmware, firstSeen });
 
@@ -69,7 +75,7 @@ export function devicesIngest() {
         }
       }
 
-      return res.json({ ok: true, deviceId, forwarded, forwardCode });
+      return res.json({ ok: true, deviceId, forwarded, forwardCode, alreadyRegistered });
     } catch (e) {
       console.error("[devices] ingest error:", e?.message || e);
       return res.status(500).json({ ok: false });
@@ -131,6 +137,40 @@ export function devicesIngest() {
     });
     return res.json({ ok: true, devicesUpdated: count });
   });
+  // Admin: delete a single device by deviceId (token required)
+  routes.delete("/delete/:deviceId", (req, res) => {
+    if (!requireAuth(req)) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+    const { deviceId } = req.params;
+    try {
+      const ok = deleteDevice(deviceId);
+      if (!ok) return res.status(404).json({ ok: false, error: "not_found" });
+      return res.json({ ok: true });
+    } catch (e) {
+      console.error("[devices] delete error:", e?.message || e);
+      return res.status(500).json({ ok: false, error: "failed" });
+    }
+  });
+
+
+
+  // Admin: clear all registered devices (token required)
+  routes.delete("/clear-all", (req, res) => {
+    if (!requireAuth(req)) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+    try {
+      const before = getDevices();
+      const count = Object.keys(before || {}).length;
+      saveDevices({});
+      return res.json({ ok: true, cleared: count });
+    } catch (e) {
+      console.error("[devices] clear-all error:", e?.message || e);
+      return res.status(500).json({ ok: false, error: "failed" });
+    }
+  });
+
 
   return routes;
 }

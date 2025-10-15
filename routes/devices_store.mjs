@@ -101,3 +101,11 @@ export function pingDevice({ mac, firmware = null, rssi = null }) {
   saveDevices(devices);
   return { ok: true, deviceId, device: d };
 }
+
+export function deleteDevice(deviceId) {
+  const devices = getDevices();
+  if (!devices[deviceId]) return false;
+  delete devices[deviceId];
+  saveDevices(devices);
+  return true;
+}
