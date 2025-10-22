@@ -1,7 +1,8 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
-import { getMacForWebToken, getMacForPersistentCode } from "./pair.mjs";
+import { getMacForWebToken } from "./pair.mjs";
+import { getNotes as dbGetNotes, setNotes as dbSetNotes, deleteNotes as dbDeleteNotes, resolvePairCode } from "../db.mjs";
 
 const LOG_BASE = process.env.DEVICE_LOG_DIR || (fs.existsSync("/data") ? "/data" : process.cwd());
 const NOTES_DIR = path.join(LOG_BASE, "notes");
@@ -22,14 +23,14 @@ export function notesRoutes() {
   function normalizeMac(raw) {
     return (raw || "").toString().replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
   }
-  function ensureAuth(req, macParam) {
+  async function ensureAuth(req, macParam) {
     const mac = normalizeMac(req.params[macParam]);
     if (!mac) return { ok: false, status: 400, error: "bad mac" };
 
     // Option A: Persistent pairing code (user-entered each time)
     const pairCode = (req.header("X-Pair-Code") || req.header("x-pair-code") || "").toString();
     if (pairCode) {
-      const bound = getMacForPersistentCode(pairCode);
+      const bound = await resolvePairCode(pairCode);
       if (bound !== mac) return { ok: false, status: 403, error: "forbidden" };
       return { ok: true, mac };
     }
@@ -60,14 +61,12 @@ export function notesRoutes() {
     return { ok: false, status: 401, error: "missing token" };
   }
 
-  routes.get("/:mac", (req, res) => {
-    const a = ensureAuth(req, "mac");
+  routes.get("/:mac", async (req, res) => {
+    const a = await ensureAuth(req, "mac");
     if (!a.ok) return res.status(a.status).type("text/plain").send(a.error);
     try {
-      const file = path.join(NOTES_DIR, `${a.mac}.txt`);
-      const text = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
-      if (!fs.existsSync(file) || String(text).trim().length === 0) {
-        // No notes for this device: return 204 so ESP treats it as "no content"
+      const text = await dbGetNotes(a.mac);
+      if (!text || String(text).trim().length === 0) {
         return res.status(204).type("text/plain").send("");
       }
       return res.status(200).type("text/plain").send(text);
@@ -76,37 +75,33 @@ export function notesRoutes() {
     }
   });
 
-  routes.post("/:mac", (req, res) => {
-    const a = ensureAuth(req, "mac");
+  routes.post("/:mac", async (req, res) => {
+    const a = await ensureAuth(req, "mac");
     if (!a.ok) return res.status(a.status).json({ ok: false, error: a.error });
     try {
       let { text = "", mode = "append" } = req.body || {};
       text = String(text || "");
-      const file = path.join(NOTES_DIR, `${a.mac}.txt`);
-      fs.mkdirSync(NOTES_DIR, { recursive: true });
-      let final = "";
-      if (mode === "set") {
-        final = text;
-      } else {
-        const prev = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
-        final = prev.length ? prev + "\n" + text : text;
-      }
-      // Enforce simple size cap for quick TI fetch
+      // Enforce simple size cap for quick TI fetch on the final stored body
       const CAP = 16000;
-      if (final.length > CAP) final = final.slice(final.length - CAP);
-      fs.writeFileSync(file, final, "utf8");
-      res.json({ ok: true, bytes: final.length });
+      if (text.length > CAP && mode === "set") text = text.slice(text.length - CAP);
+      // For append, cap is enforced by storing and letting client request pages; we keep a loose cap by trimming after append
+      await dbSetNotes(a.mac, text, mode);
+      // Optional post-trim to keep row bounded
+      const final = await dbGetNotes(a.mac);
+      if (final.length > CAP) {
+        await dbSetNotes(a.mac, final.slice(final.length - CAP), "set");
+      }
+      res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ ok: false });
     }
   });
 
-  routes.delete("/:mac", (req, res) => {
-    const a = ensureAuth(req, "mac");
+  routes.delete("/:mac", async (req, res) => {
+    const a = await ensureAuth(req, "mac");
     if (!a.ok) return res.status(a.status).json({ ok: false, error: a.error });
     try {
-      const file = path.join(NOTES_DIR, `${a.mac}.txt`);
-      if (fs.existsSync(file)) fs.unlinkSync(file);
+      await dbDeleteNotes(a.mac);
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ ok: false });

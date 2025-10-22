@@ -26,6 +26,8 @@ export function devicesLogs() {
       let forwarded = false;
       let forwardCode = null;
       if (forwardUrl) {
+        const ac = new AbortController();
+        const t = setTimeout(() => ac.abort("timeout"), 3000);
         try {
           const resp = await fetch(forwardUrl, {
             method: "POST",
@@ -34,11 +36,14 @@ export function devicesLogs() {
               ...(forwardToken ? { "X-Service-Token": forwardToken } : {}),
             },
             body: JSON.stringify({ mac, chipId, lines }),
+            signal: ac.signal,
           });
           forwardCode = resp.status;
           forwarded = resp.ok;
         } catch (e) {
           console.error("[logs] forward error:", e?.message || e);
+        } finally {
+          clearTimeout(t);
         }
       }
 

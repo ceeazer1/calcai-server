@@ -1,6 +1,7 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
+import { getPairCode as dbGetPairCode, setPairCode as dbSetPairCode, rotatePairCode as dbRotatePairCode, resolvePairCode as dbResolvePairCode, deleteNotes as dbDeleteNotes } from "../db.mjs";
 
 // Shared data paths (notes file lives alongside logs)
 const LOG_BASE = fs.existsSync("/data") ? "/data" : process.cwd();
@@ -57,18 +58,16 @@ export function pairRoutes() {
 
   // Device (ESP) requests a persistent pairing code (PIN). Returns plain text code.
   // Accept both GET and POST for simplicity from firmware
-  const startHandler = (req, res) => {
+  const startHandler = async (req, res) => {
     try {
       const rawMac = (req.query.mac || req.body?.mac || "").toString();
       const mac = rawMac.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
       if (!mac) return res.status(400).type("text/plain").send("bad mac");
 
-      const pins = loadPins();
-      let code = pins[mac];
+      let code = await dbGetPairCode(mac);
       if (!code) {
         code = genCode(6);
-        pins[mac] = code;
-        savePins(pins);
+        await dbSetPairCode(mac, code);
       }
       res.type("text/plain").send(code);
     } catch (e) {
@@ -95,23 +94,20 @@ export function pairRoutes() {
   });
 
   // Resolve code -> mac (for code-first flows)
-  routes.get("/resolve", (req, res) => {
+  routes.get("/resolve", async (req, res) => {
     const code = (req.query.code || "").toString();
-    const mac = getMacForPairCode(code);
+    const mac = await dbResolvePairCode(code);
     if (!mac) return res.status(404).json({ ok: false, error: "not_found" });
     res.json({ ok: true, mac });
   });
 
   // Reset pairing for a device: rotate PIN and clear existing web tokens for that MAC
-  routes.post("/reset/:mac", (req, res) => {
+  routes.post("/reset/:mac", async (req, res) => {
     const raw = (req.params.mac || "").toString();
     const mac = raw.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
     if (!mac) return res.status(400).json({ ok: false, error: "bad_mac" });
 
-    const pins = loadPins();
-    const code = genCode(6);
-    pins[mac] = code;
-    savePins(pins);
+    const code = await dbRotatePairCode(mac, genCode);
 
     // Clear web tokens for this MAC
     try {
@@ -122,6 +118,7 @@ export function pairRoutes() {
 
     // Also clear any stored notes so calculator shows pairing/setup again
     try {
+      await dbDeleteNotes(mac);
       const notesFile = path.join(NOTES_DIR, `${mac}.txt`);
       if (fs.existsSync(notesFile)) fs.unlinkSync(notesFile);
     } catch {}
@@ -136,6 +133,8 @@ export function getMacForWebToken(tok) {
   return webTokens.get(tok) || null;
 }
 export function getMacForPersistentCode(code) {
+  // Synchronous wrapper retained for back-compat callers; resolves from file map.
+  // Note: New code paths should use dbResolvePairCode (async).
   return getMacForPairCode(code);
 }
 

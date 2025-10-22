@@ -1,5 +1,6 @@
 import express from "express";
 import { getDevices, saveDevices, upsertDevice, setUpdateFlags, pingDevice, deleteDevice } from "./devices_store.mjs";
+import { upsertDeviceDb, pingDeviceDb, setUpdateFlagsDb, listDevicesDb } from "../db.mjs";
 
 // Device-ingest API for ESP32 devices (public from device) and simple admin helpers
 // - POST /api/devices/register-public
@@ -41,14 +42,25 @@ export function devicesIngest() {
         return res.status(400).json({ ok: false, error: "mac and chipId required" });
       }
 
-      // Determine if device already existed
-      try { /* safe read */ } catch {}
-      const snapshot = getDevices();
       const preId = (mac || '').replace(/:/g, '').toLowerCase();
-      const alreadyRegistered = !!(snapshot && snapshot[preId]);
+      let alreadyRegistered = false;
+      let deviceId = preId;
+      let device = null;
 
-      // Upsert into Fly server persistent store
-      const { deviceId, device } = upsertDevice({ mac, chipId, model, firmware, firstSeen });
+      if (process.env.DATABASE_URL) {
+        try {
+          const snapshot = await (listDevicesDb().catch(() => null));
+          alreadyRegistered = !!(snapshot && snapshot[preId]);
+        } catch {}
+        device = await upsertDeviceDb({ mac, chipId, model, firmware, firstSeen });
+      } else {
+        // FS fallback
+        const snapshot = getDevices();
+        alreadyRegistered = !!(snapshot && snapshot[preId]);
+        const resUp = upsertDevice({ mac, chipId, model, firmware, firstSeen });
+        deviceId = resUp.deviceId;
+        device = resUp.device;
+      }
 
       // Optional forward to dashboard/backoffice
       // Derive URL from MANAGEMENT_DASHBOARD_BASE if DASHBOARD_FORWARD_URL not provided
@@ -83,24 +95,53 @@ export function devicesIngest() {
   });
 
   // Public ping (token optional): update lastSeen/firmware by MAC without re-registering
-  routes.post("/ping-public", (req, res) => {
+  routes.post("/ping-public", async (req, res) => {
     if (!requireAuth(req)) {
       return res.status(401).json({ ok: false, error: "unauthorized" });
     }
     const { mac = "", firmware = null, rssi = null } = req.body || {};
     if (!mac) return res.status(400).json({ ok: false, error: "mac_required" });
-    const result = pingDevice({ mac, firmware, rssi });
-    if (!result.ok && result.notFound) return res.status(404).json({ ok: false, error: "not_registered" });
-    return res.json({ ok: true, deviceId: result.deviceId, device: result.device });
+
+    const deviceId = (mac || '').replace(/:/g, '').toLowerCase();
+    if (process.env.DATABASE_URL) {
+      try {
+        await pingDeviceDb({ mac, firmware, rssi });
+        const snapshot = await (listDevicesDb().catch(() => null));
+        const device = snapshot ? snapshot[deviceId] : null;
+        return res.json({ ok: true, deviceId, device });
+      } catch (e) {
+        console.error("[devices] ping db error:", e?.message || e);
+        return res.status(500).json({ ok: false, error: "failed" });
+      }
+    } else {
+      const result = pingDevice({ mac, firmware, rssi });
+      if (!result.ok && result.notFound) return res.status(404).json({ ok: false, error: "not_registered" });
+      return res.json({ ok: true, deviceId: result.deviceId, device: result.device });
+    }
   });
 
   // Public list (token optional)
-  routes.get("/list-public", (req, res) => {
+  routes.get("/list-public", async (req, res) => {
     if (!requireAuth(req)) {
       return res.status(401).json({ ok: false, error: "unauthorized" });
     }
+    if (process.env.DATABASE_URL) {
+      try {
+        const devices = await (listDevicesDb().catch(() => null));
+        const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+        if (devices) {
+          Object.values(devices).forEach(d => {
+            const ls = d.lastSeen ? new Date(d.lastSeen).getTime() : 0;
+            if (ls && ls < fiveMinutesAgo) d.status = 'offline';
+          });
+          return res.json(devices);
+        }
+      } catch (e) {
+        console.error("[devices] list db error:", e?.message || e);
+      }
+      // fallthrough to FS if DB failed
+    }
     const devices = getDevices();
-    // Mark offline if older than 5 minutes
     const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
     Object.values(devices).forEach(d => {
       if (new Date(d.lastSeen).getTime() < fiveMinutesAgo) d.status = 'offline';
@@ -110,32 +151,62 @@ export function devicesIngest() {
   });
 
   // Admin: set update flags on device (token required)
-  routes.put("/update/:deviceId", (req, res) => {
+  routes.put("/update/:deviceId", async (req, res) => {
     if (!requireAuth(req)) {
       return res.status(401).json({ ok: false, error: "unauthorized" });
     }
     const { deviceId } = req.params;
     const { updateAvailable, targetFirmware } = req.body || {};
-    const ok = setUpdateFlags(deviceId, { updateAvailable, targetFirmware });
-    if (!ok) return res.status(404).json({ ok: false, error: "not_found" });
-    const devices = getDevices();
-    res.json({ ok: true, device: devices[deviceId] });
+
+    if (process.env.DATABASE_URL) {
+      try {
+        const ok = await setUpdateFlagsDb(deviceId, { updateAvailable, targetFirmware });
+        if (!ok) return res.status(404).json({ ok: false, error: "not_found" });
+        const snapshot = await (listDevicesDb().catch(() => null));
+        const device = snapshot ? snapshot[deviceId] : null;
+        return res.json({ ok: true, device });
+      } catch (e) {
+        console.error("[devices] update db error:", e?.message || e);
+        return res.status(500).json({ ok: false, error: "failed" });
+      }
+    } else {
+      const ok = setUpdateFlags(deviceId, { updateAvailable, targetFirmware });
+      if (!ok) return res.status(404).json({ ok: false, error: "not_found" });
+      const devices = getDevices();
+      return res.json({ ok: true, device: devices[deviceId] });
+    }
   });
 
   // Admin: set update flags for ALL devices (token required)
-  routes.post("/update-all", (req, res) => {
+  routes.post("/update-all", async (req, res) => {
     if (!requireAuth(req)) {
       return res.status(401).json({ ok: false, error: "unauthorized" });
     }
     const { version } = req.body || {};
     if (!version) return res.status(400).json({ ok: false, error: "version_required" });
-    const devices = getDevices();
-    let count = 0;
-    Object.keys(devices || {}).forEach(id => {
-      const ok = setUpdateFlags(id, { updateAvailable: true, targetFirmware: version });
-      if (ok) count++;
-    });
-    return res.json({ ok: true, devicesUpdated: count });
+
+    if (process.env.DATABASE_URL) {
+      try {
+        const devices = await (listDevicesDb().catch(() => null)) || {};
+        let count = 0;
+        for (const id of Object.keys(devices)) {
+          const ok = await setUpdateFlagsDb(id, { updateAvailable: true, targetFirmware: version });
+          if (ok) count++;
+        }
+        return res.json({ ok: true, devicesUpdated: count });
+      } catch (e) {
+        console.error("[devices] update-all db error:", e?.message || e);
+        return res.status(500).json({ ok: false, error: "failed" });
+      }
+    } else {
+      const devices = getDevices();
+      let count = 0;
+      Object.keys(devices || {}).forEach(id => {
+        const ok = setUpdateFlags(id, { updateAvailable: true, targetFirmware: version });
+        if (ok) count++;
+      });
+      return res.json({ ok: true, devicesUpdated: count });
+    }
   });
   // Admin: delete a single device by deviceId (token required)
   routes.delete("/delete/:deviceId", (req, res) => {
