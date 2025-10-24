@@ -1,7 +1,7 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
-import { getPairCode as dbGetPairCode, setPairCode as dbSetPairCode, rotatePairCode as dbRotatePairCode, resolvePairCode as dbResolvePairCode, deleteNotes as dbDeleteNotes } from "../db.mjs";
+import { getPairCode as dbGetPairCode, setPairCode as dbSetPairCode, rotatePairCode as dbRotatePairCode, resolvePairCode as dbResolvePairCode, deleteNotes as dbDeleteNotes, isDeviceClaimed as dbIsDeviceClaimed } from "../db.mjs";
 
 // Shared data paths (notes file lives alongside logs)
 const LOG_BASE = fs.existsSync("/data") ? "/data" : process.cwd();
@@ -93,12 +93,13 @@ export function pairRoutes() {
     }
   });
 
-  // Resolve code -> mac (for code-first flows)
+  // Resolve code -> mac (for code-first flows). Also indicate claim status.
   routes.get("/resolve", async (req, res) => {
     const code = (req.query.code || "").toString();
     const mac = await dbResolvePairCode(code);
     if (!mac) return res.status(404).json({ ok: false, error: "not_found" });
-    res.json({ ok: true, mac });
+    const claimed = await dbIsDeviceClaimed(mac);
+    res.json({ ok: true, mac, claimed: !!claimed });
   });
 
   // Reset pairing for a device: rotate PIN and clear existing web tokens for that MAC

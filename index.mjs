@@ -6,6 +6,8 @@ import { otaProxy } from "./routes/ota_proxy.mjs";
 import { serverLogs } from "./routes/server_logs.mjs";
 import { pairRoutes } from "./routes/pair.mjs";
 import { notesRoutes } from "./routes/notes.mjs";
+import { authRoutes } from "./routes/auth.mjs";
+import { adminRoutes } from "./routes/admin.mjs";
 import { initDb } from "./db.mjs";
 
 const app = express();
@@ -51,9 +53,11 @@ app.use("/api/devices", devicesLogs());
 // OTA proxy routes (ESP -> Fly -> Dashboard)
 app.use("/api/ota", otaProxy());
 
-// Pairing + Notes APIs
+// Pairing + Notes + Auth + Admin APIs
 app.use("/api/pair", pairRoutes());
 app.use("/api/notes", notesRoutes());
+app.use("/api/auth", authRoutes());
+app.use("/api/admin", adminRoutes());
 
 // Server logs API
 app.use("/api/logs", serverLogs());

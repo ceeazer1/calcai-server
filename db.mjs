@@ -35,9 +35,16 @@ async function ensureSchema() {
   const client = await pool.connect();
   try {
     await client.query(`
+      create table if not exists users (
+        id serial primary key,
+        username text unique not null,
+        password_hash text not null,
+        created_at timestamptz default now()
+      );
       create table if not exists devices (
         mac text primary key,
         code text unique,
+        owner_id integer references users(id),
         created_at timestamptz default now(),
         updated_at timestamptz default now()
       );
@@ -47,6 +54,7 @@ async function ensureSchema() {
         updated_at timestamptz default now()
       );
       create index if not exists idx_devices_code on devices(code);
+      create index if not exists idx_devices_owner on devices(owner_id);
       -- Extend devices for firmware/update tracking (safe no-ops if already present)
       alter table devices add column if not exists chip_id text;
       alter table devices add column if not exists model text;
@@ -324,4 +332,104 @@ export async function listDevicesDb() {
     }
     return out;
   } finally { client.release(); }
+}
+
+
+// --- Users & Ownership (DB with FS fallback) ---
+const USERS_FILE = path.join(LOG_BASE, 'users.json');
+function readUsersJSON(){ try { return JSON.parse(fs.readFileSync(USERS_FILE,'utf8')||'{}') || {}; } catch { return {}; } }
+function writeUsersJSON(obj){ try { fs.writeFileSync(USERS_FILE, JSON.stringify(obj,null,2),'utf8'); return true; } catch { return false; } }
+
+export async function createUser(username, passwordHash){
+  username = String(username||'').trim(); if (!username) return { ok:false, error:'invalid_username' };
+  if (dbEnabled) await tryInitPg();
+  if (pool){
+    const client = await pool.connect();
+    try {
+      const q = await client.query("insert into users(username, password_hash) values($1,$2) on conflict (username) do nothing returning id", [username, passwordHash]);
+      if (!q.rows.length) return { ok:false, error:'username_taken' };
+      return { ok:true, id:q.rows[0].id };
+    } finally { client.release(); }
+  }
+  const data = readUsersJSON();
+  data.users = data.users || {}; data.owners = data.owners || {}; data.nextId = data.nextId || 1;
+  if (data.users[username]) return { ok:false, error:'username_taken' };
+  const id = data.nextId++;
+  data.users[username] = { id, username, password_hash: passwordHash, created_at: new Date().toISOString() };
+  writeUsersJSON(data);
+  return { ok:true, id };
+}
+
+export async function getUserByUsername(username){
+  username = String(username||'').trim(); if (!username) return null;
+  if (dbEnabled) await tryInitPg();
+  if (pool){
+    const client = await pool.connect();
+    try {
+      const { rows } = await client.query("select id, username, password_hash from users where username=$1", [username]);
+      return rows[0] || null;
+    } finally { client.release(); }
+  }
+  const data = readUsersJSON();
+  const u = (data.users||{})[username];
+  if (!u) return null;
+  return { id: u.id, username: u.username, password_hash: u.password_hash };
+}
+
+export async function setUserPassword(username, passwordHash){
+  username = String(username||'').trim(); if (!username) return false;
+  if (dbEnabled) await tryInitPg();
+  if (pool){
+    const client = await pool.connect();
+    try { const { rowCount } = await client.query("update users set password_hash=$2 where username=$1", [username, passwordHash]); return rowCount>0; }
+    finally { client.release(); }
+  }
+  const data = readUsersJSON(); data.users = data.users||{}; if (!data.users[username]) return false; data.users[username].password_hash = passwordHash; writeUsersJSON(data); return true;
+}
+
+export async function setDeviceOwner(mac, username){
+  mac = String(mac||'').toLowerCase(); username = String(username||'').trim(); if (!mac || !username) return false;
+  if (dbEnabled) await tryInitPg();
+  if (pool){
+    const client = await pool.connect();
+    try {
+      const { rows } = await client.query("select id from users where username=$1", [username]);
+      if (!rows.length) return false;
+      const userId = rows[0].id;
+      await client.query("insert into devices(mac, owner_id) values($1,$2) on conflict (mac) do update set owner_id=excluded.owner_id, updated_at=now()", [mac, userId]);
+      return true;
+    } finally { client.release(); }
+  }
+  const data = readUsersJSON(); data.owners = data.owners||{}; data.owners[mac] = username; writeUsersJSON(data); return true;
+}
+
+export async function getDeviceOwner(mac){
+  mac = String(mac||'').toLowerCase(); if (!mac) return null;
+  if (dbEnabled) await tryInitPg();
+  if (pool){
+    const client = await pool.connect();
+    try {
+      const { rows } = await client.query("select u.username from devices d left join users u on u.id=d.owner_id where d.mac=$1", [mac]);
+      if (rows.length && rows[0].username) return rows[0].username;
+      return null;
+    } finally { client.release(); }
+  }
+  const data = readUsersJSON(); const owners = data.owners||{}; return owners[mac] || null;
+}
+
+export async function isDeviceClaimed(mac){
+  return !!(await getDeviceOwner(mac));
+}
+
+export async function getUserDevices(username){
+  username = String(username||'').trim(); if (!username) return [];
+  if (dbEnabled) await tryInitPg();
+  if (pool){
+    const client = await pool.connect();
+    try {
+      const { rows } = await client.query("select d.mac from devices d join users u on u.id=d.owner_id where u.username=$1 order by d.updated_at desc nulls last", [username]);
+      return rows.map(r=>r.mac);
+    } finally { client.release(); }
+  }
+  const data = readUsersJSON(); const owners = data.owners||{}; const out=[]; for (const [m,u] of Object.entries(owners)) if (u===username) out.push(m); return out;
 }

@@ -2,7 +2,8 @@ import express from "express";
 import fs from "fs";
 import path from "path";
 import { getMacForWebToken } from "./pair.mjs";
-import { getNotes as dbGetNotes, setNotes as dbSetNotes, deleteNotes as dbDeleteNotes, resolvePairCode } from "../db.mjs";
+import { getNotes as dbGetNotes, setNotes as dbSetNotes, deleteNotes as dbDeleteNotes, resolvePairCode, getDeviceOwner } from "../db.mjs";
+import { verifyToken } from "../utils/token.mjs";
 
 const LOG_BASE = process.env.DEVICE_LOG_DIR || (fs.existsSync("/data") ? "/data" : process.cwd());
 const NOTES_DIR = path.join(LOG_BASE, "notes");
@@ -14,7 +15,7 @@ export function notesRoutes() {
   // Minimal CORS for browser calls
   routes.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Web-Token, X-Service-Token, X-Pair-Code");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Web-Token, X-Service-Token, X-Pair-Code");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     if (req.method === "OPTIONS") return res.sendStatus(200);
     next();
@@ -43,7 +44,21 @@ export function notesRoutes() {
       return { ok: true, mac };
     }
 
-    // Option C: Device/service token (from ESP32), accept header or ?token= query
+    // Option C: Authorization Bearer (JWT for user accounts)
+    const auth = (req.header("authorization") || req.header("Authorization") || "").toString();
+    if (auth.startsWith("Bearer ")) {
+      const payload = verifyToken(auth.slice(7));
+      if (payload && payload.sub) {
+        // Accept if token user owns this device
+        const owner = await getDeviceOwner(mac);
+        if ((owner && owner === payload.sub) || (Array.isArray(payload.macs) && payload.macs.includes(mac))) {
+          return { ok: true, mac };
+        }
+        // Otherwise fallthrough to other auth options
+      }
+    }
+
+    // Option D: Device/service token (from ESP32), accept header or ?token= query
     const validTokens = [
       process.env.DEVICES_SERVICE_TOKEN,
       process.env.DASHBOARD_SERVICE_TOKEN,
